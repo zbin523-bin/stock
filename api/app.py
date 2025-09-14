@@ -38,7 +38,9 @@ class EnhancedStockScraper:
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         })
         
-        # qos.hk API配置
+        # API配置
+        self.alpha_vantage_key = "5DGMRPMMEUBMX7PU"
+        self.tushare_token = "91cb00a3a0021ce5faa4244f491a6669b926b3d50b381b1680bace81"
         self.qos_api_key = "708435e33614a53a9abde3f835024144"
         self.qos_base_url = "https://qos.hk"
     
@@ -51,7 +53,14 @@ class EnhancedStockScraper:
             return cached['data']
         
         try:
-            # 新浪财经API
+            # 优先使用TuShare Pro API
+            data = self._scrape_tushare_a(code)
+            if data and data.get('price', 0) > 0:
+                stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
+                logger.info(f"成功获取A股 {code}: {data['name']} - {data['price']}")
+                return data
+            
+            # 备用：新浪财经API
             data = self._scrape_sina_a(code)
             if data and data.get('price', 0) > 0:
                 stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
@@ -72,14 +81,21 @@ class EnhancedStockScraper:
             return cached['data']
         
         try:
-            # 优先使用qos.hk API
+            # 优先使用Alpha Vantage API
+            data = self._scrape_alpha_vantage_us(symbol)
+            if data and data.get('price', 0) > 0:
+                stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
+                logger.info(f"成功获取美股 {symbol}: {data['name']} - {data['price']}")
+                return data
+            
+            # 备用：qos.hk API
             data = self._scrape_qos_us(symbol)
             if data and data.get('price', 0) > 0:
                 stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
                 logger.info(f"成功获取美股 {symbol}: {data['name']} - {data['price']}")
                 return data
             
-            # 备用：Yahoo Finance API
+            # 第三备用：Yahoo Finance API
             data = self._scrape_yahoo_finance(symbol)
             if data and data.get('price', 0) > 0:
                 stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
@@ -100,15 +116,29 @@ class EnhancedStockScraper:
             return cached['data']
         
         try:
-            # 优先使用qos.hk API
+            # 优先使用Alpha Vantage API
+            data = self._scrape_alpha_vantage_hk(code)
+            if data and data.get('price', 0) > 0:
+                stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
+                logger.info(f"成功获取港股 {code}: {data['name']} - {data['price']}")
+                return data
+            
+            # 备用：qos.hk API
             data = self._scrape_qos_hk(code)
             if data and data.get('price', 0) > 0:
                 stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
                 logger.info(f"成功获取港股 {code}: {data['name']} - {data['price']}")
                 return data
             
-            # 备用：腾讯财经港股API
+            # 第三备用：腾讯财经港股API
             data = self._scrape_tencent_hk(code)
+            if data and data.get('price', 0) > 0:
+                stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
+                logger.info(f"成功获取港股 {code}: {data['name']} - {data['price']}")
+                return data
+            
+            # 第四备用：新浪财经港股API
+            data = self._scrape_sina_hk(code)
             if data and data.get('price', 0) > 0:
                 stock_cache[cache_key] = {'data': data, 'timestamp': int(time.time() * 1000)}
                 logger.info(f"成功获取港股 {code}: {data['name']} - {data['price']}")
@@ -306,49 +336,107 @@ class EnhancedStockScraper:
     def _scrape_tencent_hk(self, code):
         """腾讯财经港股API"""
         try:
-            hk_code = f"hk{code}"
-            url = f"https://qt.gtimg.cn/q={hk_code}"
+            # 尝试不同的港股代码格式
+            hk_codes = [f"hk{code}", f"r_hk{code}"]
             
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
-                'Referer': 'https://stockapp.finance.qq.com/',
-                'Accept': 'text/plain, */*; q=0.01',
-            }
-            
-            response = self.session.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                content = response.text
-                if '=' in content and '~' in content:
-                    data_part = content.split('=')[1].strip('";\n')
-                    fields = data_part.split('~')
-                    
-                    if len(fields) >= 10:
-                        name = fields[1] if fields[1] else f"HK{code}"
-                        price = float(fields[3]) if fields[3] and fields[3] != '0.00' else 0
-                        change = float(fields[4]) if fields[4] and fields[4] != '0.00' else 0
-                        change_percent = float(fields[5]) if fields[5] and fields[5] != '0.00' else 0
-                        volume = int(fields[6]) if fields[6] and fields[6].isdigit() else 0
-                        high = float(fields[8]) if fields[8] and fields[8] != '0.00' else 0
-                        low = float(fields[9]) if fields[9] and fields[9] != '0.00' else 0
-                        open_price = float(fields[2]) if fields[2] and fields[2] != '0.00' else 0
+            for hk_code in hk_codes:
+                url = f"https://qt.gtimg.cn/q={hk_code}"
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+                    'Referer': 'https://stockapp.finance.qq.com/',
+                    'Accept': 'text/plain, */*; q=0.01',
+                }
+                
+                response = self.session.get(url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    content = response.text
+                    if '=' in content and '~' in content:
+                        data_part = content.split('=')[1].strip('";\n')
+                        fields = data_part.split('~')
                         
-                        if price > 0:
-                            return {
-                                'code': code,
-                                'name': name,
-                                'price': price,
-                                'change': change,
-                                'changePercent': change_percent,
-                                'volume': volume,
-                                'high': high,
-                                'low': low,
-                                'open': open_price,
-                                'timestamp': int(time.time() * 1000),
-                                'currency': 'HKD'
-                            }
+                        if len(fields) >= 10 and fields[3] and fields[3] != '0.00':
+                            name = fields[1] if fields[1] else f"HK{code}"
+                            price = float(fields[3]) if fields[3] and fields[3] != '0.00' else 0
+                            change = float(fields[4]) if fields[4] and fields[4] != '0.00' else 0
+                            change_percent = float(fields[5]) if fields[5] and fields[5] != '0.00' else 0
+                            volume = int(fields[6]) if fields[6] and fields[6].isdigit() else 0
+                            high = float(fields[8]) if fields[8] and fields[8] != '0.00' else 0
+                            low = float(fields[9]) if fields[9] and fields[9] != '0.00' else 0
+                            open_price = float(fields[2]) if fields[2] and fields[2] != '0.00' else 0
+                            
+                            if price > 0:
+                                logger.info(f"腾讯财经港股API成功获取 {code}: {name} - {price}")
+                                return {
+                                    'code': code,
+                                    'name': name,
+                                    'price': price,
+                                    'change': change,
+                                    'changePercent': change_percent,
+                                    'volume': volume,
+                                    'high': high,
+                                    'low': low,
+                                    'open': open_price,
+                                    'timestamp': int(time.time() * 1000),
+                                    'currency': 'HKD'
+                                }
+                            
         except Exception as e:
             logger.error(f"腾讯财经港股API失败: {e}")
+        
+        return None
+    
+    def _scrape_sina_hk(self, code):
+        """新浪财经港股API"""
+        try:
+            # 尝试不同的港股代码格式
+            hk_codes = [f"rt_hk{code}", f"hk{code}"]
+            
+            for hk_code in hk_codes:
+                url = f"https://hq.sinajs.cn/list={hk_code}"
+                
+                headers = {
+                    'Referer': f'https://finance.sina.com.cn/realstock/company/{hk_code}/nc.shtml',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                }
+                
+                response = self.session.get(url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    content = response.text
+                    if '=' in content and '"' in content:
+                        data_part = content.split('=')[1].strip('";\n')
+                        fields = data_part.split(',')
+                        
+                        if len(fields) >= 10 and fields[6] != '0.000':
+                            name = fields[0] if fields[0] else f"HK{code}"
+                            price = float(fields[6]) if fields[6] and fields[6] != '0.000' else 0
+                            change = float(fields[7]) if fields[7] and fields[7] != '0.000' else 0
+                            change_percent = float(fields[8]) if fields[8] and fields[8] != '0.000' else 0
+                            volume = int(fields[10]) if fields[10] and fields[10].isdigit() else 0
+                            high = float(fields[4]) if fields[4] and fields[4] != '0.000' else 0
+                            low = float(fields[5]) if fields[5] and fields[5] != '0.000' else 0
+                            open_price = float(fields[2]) if fields[2] and fields[2] != '0.000' else 0
+                            
+                            if price > 0:
+                                logger.info(f"新浪财经港股API成功获取 {code}: {name} - {price}")
+                                return {
+                                    'code': code,
+                                    'name': name,
+                                    'price': price,
+                                    'change': change,
+                                    'changePercent': change_percent,
+                                    'volume': volume,
+                                    'high': high,
+                                    'low': low,
+                                    'open': open_price,
+                                    'timestamp': int(time.time() * 1000),
+                                    'currency': 'HKD'
+                                }
+                            
+        except Exception as e:
+            logger.error(f"新浪财经港股API失败: {e}")
         
         return None
     
@@ -457,9 +545,204 @@ class EnhancedStockScraper:
             logger.error(f"qos.hk美股 {symbol} 失败: {e}")
         
         return None
+    
+    def _scrape_tushare_a(self, code):
+        """TuShare Pro A股数据API"""
+        try:
+            url = "http://api.tushare.pro"
+            headers = {
+                'Authorization': f'Bearer {self.tushare_token}',
+                'Content-Type': 'application/json'
+            }
+            
+            # 获取日线行情数据
+            daily_data = {
+                "api_name": "daily",
+                "token": self.tushare_token,
+                "params": {
+                    "ts_code": code,
+                    "trade_date": "",
+                    "start_date": "",
+                    "end_date": "",
+                    "limit": "1",
+                    "offset": ""
+                }
+            }
+            
+            response = self.session.post(url, json=daily_data, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('code') == 0 and result.get('data'):
+                    stock_data = result['data'][0]
+                    
+                    # 获取股票基本信息以获得股票名称
+                    name = code
+                    try:
+                        basic_data = {
+                            "api_name": "stock_basic",
+                            "token": self.tushare_token,
+                            "params": {
+                                "ts_code": code,
+                                "limit": "1"
+                            }
+                        }
+                        basic_response = self.session.post(url, json=basic_data, headers=headers, timeout=5)
+                        if basic_response.status_code == 200:
+                            basic_result = basic_response.json()
+                            if basic_result.get('code') == 0 and basic_result.get('data'):
+                                name = basic_result['data'][0].get('name', code)
+                    except Exception as e:
+                        logger.debug(f"获取股票名称失败: {e}")
+                    
+                    return {
+                        'code': code,
+                        'name': name,
+                        'price': float(stock_data.get('close', 0)),
+                        'change': float(stock_data.get('change', 0)),
+                        'changePercent': float(stock_data.get('pct_chg', 0)),
+                        'volume': int(stock_data.get('vol', 0)),
+                        'high': float(stock_data.get('high', 0)),
+                        'low': float(stock_data.get('low', 0)),
+                        'open': float(stock_data.get('open', 0)),
+                        'timestamp': int(time.time() * 1000),
+                        'currency': 'CNY',
+                        'source': 'TuShare Pro'
+                    }
+        except Exception as e:
+            logger.error(f"TuShare Pro A股 {code} 失败: {e}")
+        
+        return None
+    
+    def _scrape_alpha_vantage_us(self, symbol):
+        """Alpha Vantage 美股数据API"""
+        try:
+            url = "https://www.alphavantage.co/query"
+            params = {
+                'function': 'GLOBAL_QUOTE',
+                'symbol': symbol,
+                'apikey': self.alpha_vantage_key
+            }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'Global Quote' in data:
+                    quote = data['Global Quote']
+                    price = float(quote.get('05. price', 0))
+                    if price > 0:
+                        return {
+                            'code': symbol,
+                            'name': quote.get('01. symbol', symbol),
+                            'price': price,
+                            'change': float(quote.get('09. change', 0)),
+                            'changePercent': float(quote.get('10. change percent', '0%').replace('%', '')),
+                            'volume': int(quote.get('06. volume', 0)),
+                            'high': float(quote.get('03. high', 0)),
+                            'low': float(quote.get('04. low', 0)),
+                            'open': float(quote.get('02. open', 0)),
+                            'timestamp': int(time.time() * 1000),
+                            'currency': 'USD',
+                            'source': 'Alpha Vantage'
+                        }
+        except Exception as e:
+            logger.error(f"Alpha Vantage 美股 {symbol} 失败: {e}")
+        
+        return None
+    
+    def _scrape_alpha_vantage_hk(self, code):
+        """Alpha Vantage 港股数据API"""
+        try:
+            # 尝试不同的港股代码格式
+            formats_to_try = [
+                f"{code}.HK",    # 标准格式
+                f"{code}.HKG",   # 备用格式
+                f"HK{code}",     # 香港交易所格式
+                code             # 原始格式
+            ]
+            
+            for hk_symbol in formats_to_try:
+                url = "https://www.alphavantage.co/query"
+                params = {
+                    'function': 'GLOBAL_QUOTE',
+                    'symbol': hk_symbol,
+                    'apikey': self.alpha_vantage_key
+                }
+                
+                response = self.session.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'Global Quote' in data:
+                        quote = data['Global Quote']
+                        price = float(quote.get('05. price', 0))
+                        if price > 0:
+                            logger.info(f"Alpha Vantage 港股 {code} 成功，使用格式: {hk_symbol}")
+                            return {
+                                'code': code,
+                                'name': quote.get('01. symbol', hk_symbol).replace('.HK', '').replace('.HKG', '').replace('HK', ''),
+                                'price': price,
+                                'change': float(quote.get('09. change', 0)),
+                                'changePercent': float(quote.get('10. change percent', '0%').replace('%', '')),
+                                'volume': int(quote.get('06. volume', 0)),
+                                'high': float(quote.get('03. high', 0)),
+                                'low': float(quote.get('04. low', 0)),
+                                'open': float(quote.get('02. open', 0)),
+                                'timestamp': int(time.time() * 1000),
+                                'currency': 'HKD',
+                                'source': 'Alpha Vantage'
+                            }
+                    elif 'Error Message' in data:
+                        logger.debug(f"Alpha Vantage 港股 {code} 格式 {hk_symbol} 无效: {data['Error Message']}")
+                        continue
+                    elif 'Note' in data:
+                        logger.warning(f"Alpha Vantage API调用频率限制: {data['Note']}")
+                        break
+        except Exception as e:
+            logger.error(f"Alpha Vantage 港股 {code} 失败: {e}")
+        
+        return None
 
 # 初始化抓取器
 scraper = EnhancedStockScraper()
+
+def _add_or_update_position(code, name, market, quantity, price):
+    """添加或更新持仓"""
+    # 检查是否已存在该股票的持仓
+    existing_position = None
+    for position in portfolio_data["positions"]:
+        if position["code"] == code and position["market"] == market:
+            existing_position = position
+            break
+    
+    if existing_position:
+        # 更新现有持仓的平均成本
+        old_quantity = existing_position["quantity"]
+        old_cost = existing_position["costPrice"] * old_quantity
+        new_quantity = old_quantity + quantity
+        new_cost = old_cost + (price * quantity)
+        existing_position["costPrice"] = new_cost / new_quantity
+        existing_position["quantity"] = new_quantity
+    else:
+        # 添加新持仓
+        currency_map = {"A股": "CNY", "美股": "USD", "港股": "HKD"}
+        industry_map = {
+            "600036": "银行", "000858": "白酒", "300059": "互联网金融",
+            "AAPL": "科技", "TSLA": "汽车", "700": "科技", "9988": "电商"
+        }
+        
+        new_position = {
+            "id": len(portfolio_data["positions"]) + 1,
+            "code": code,
+            "name": name,
+            "market": market,
+            "industry": industry_map.get(code, "其他"),
+            "quantity": quantity,
+            "costPrice": price,
+            "currency": currency_map.get(market, "CNY")
+        }
+        portfolio_data["positions"].append(new_position)
 
 # 模拟的投资组合数据
 portfolio_data = {
@@ -799,13 +1082,12 @@ def _calculate_portfolio_from_transactions():
 def get_portfolio():
     """获取投资组合数据"""
     try:
-        # 从交易记录动态计算持仓
-        calculated_positions, total_cost = _calculate_portfolio_from_transactions()
+        # 使用portfolio_data中的持仓数据，确保与交易记录同步
         enriched_positions = []
         total_value = 0
         total_profit = 0
         
-        for position in calculated_positions:
+        for position in portfolio_data["positions"]:
             code = position["code"]
             market = position["market"]
             
@@ -1045,10 +1327,12 @@ def update_transaction(transaction_id):
                 'timestamp': int(time.time() * 1000)
             }), 404
         
+        old_transaction = transactions_data[transaction_index]
+        
         # 更新交易记录
         updated_transaction = {
             "id": transaction_id,
-            "date": data.get("date", transactions_data[transaction_index]["date"]),
+            "date": data.get("date", old_transaction["date"]),
             "type": data["type"],
             "code": data["code"],
             "name": data["name"],
@@ -1061,6 +1345,84 @@ def update_transaction(transaction_id):
         }
         
         transactions_data[transaction_index] = updated_transaction
+        
+        # 同步更新持仓数据
+        old_code = old_transaction["code"]
+        old_market = old_transaction["market"]
+        old_quantity = old_transaction["quantity"]
+        old_price = old_transaction["price"]
+        old_type = old_transaction["type"]
+        
+        new_code = data["code"]
+        new_market = data["market"]
+        new_quantity = int(data["quantity"])
+        new_price = float(data["price"])
+        new_type = data["type"]
+        
+        # 如果股票代码或市场发生变化，需要处理旧持仓
+        if old_code != new_code or old_market != new_market:
+            # 减少或删除旧持仓
+            position_index = -1
+            for i, pos in enumerate(portfolio_data["positions"]):
+                if pos["code"] == old_code and pos["market"] == old_market:
+                    position_index = i
+                    break
+            
+            if position_index != -1:
+                position = portfolio_data["positions"][position_index]
+                if old_type in ["buy", "买入"]:
+                    if position["quantity"] <= old_quantity:
+                        portfolio_data["positions"].pop(position_index)
+                    else:
+                        position["quantity"] -= old_quantity
+                elif old_type in ["sell", "卖出"]:
+                    position["quantity"] += old_quantity
+            
+            # 为新股票添加持仓
+            if new_type in ["buy", "买入"]:
+                _add_or_update_position(new_code, data["name"], new_market, new_quantity, new_price)
+        
+        elif old_quantity != new_quantity or old_price != new_price:
+            # 只有数量或价格发生变化，更新现有持仓
+            position_index = -1
+            for i, pos in enumerate(portfolio_data["positions"]):
+                if pos["code"] == new_code and pos["market"] == new_market:
+                    position_index = i
+                    break
+            
+            if position_index != -1:
+                position = portfolio_data["positions"][position_index]
+                
+                # 计算数量差异
+                quantity_diff = new_quantity - old_quantity
+                
+                if old_type in ["buy", "买入"]:
+                    if new_type in ["buy", "买入"]:
+                        # 买入变买入，调整数量和成本
+                        if new_quantity == 0:
+                            portfolio_data["positions"].pop(position_index)
+                        else:
+                            position["quantity"] = new_quantity
+                            # 重新计算平均成本
+                            if position["quantity"] > 0:
+                                position["costPrice"] = new_price
+                    elif new_type in ["sell", "卖出"]:
+                        # 买入变卖出
+                        position["quantity"] -= new_quantity
+                        if position["quantity"] <= 0:
+                            portfolio_data["positions"].pop(position_index)
+                
+                elif old_type in ["sell", "卖出"]:
+                    if new_type in ["buy", "买入"]:
+                        # 卖出变买入
+                        position["quantity"] += new_quantity
+                    elif new_type in ["sell", "卖出"]:
+                        # 卖出变卖出
+                        position["quantity"] += old_quantity  # 恢复原来的卖出数量
+                        position["quantity"] -= new_quantity  # 应用新的卖出数量
+                        if position["quantity"] <= 0:
+                            portfolio_data["positions"].pop(position_index)
+        
         logger.info(f"更新交易记录: {data['type']} {data['code']} {data['quantity']}股")
         
         return jsonify({
@@ -1097,6 +1459,39 @@ def delete_transaction(transaction_id):
             }), 404
         
         deleted_transaction = transactions_data.pop(transaction_index)
+        
+        # 同步更新持仓数据
+        trans = deleted_transaction
+        code = trans["code"]
+        market = trans["market"]
+        quantity = trans["quantity"]
+        
+        # 查找对应的持仓
+        position_index = -1
+        for i, pos in enumerate(portfolio_data["positions"]):
+            if pos["code"] == code and pos["market"] == market:
+                position_index = i
+                break
+        
+        if position_index != -1:
+            position = portfolio_data["positions"][position_index]
+            
+            if trans["type"] in ["buy", "买入"]:
+                # 减少持仓数量或删除持仓
+                if position["quantity"] <= quantity:
+                    # 如果持仓数量小于等于要删除的数量，删除整个持仓
+                    portfolio_data["positions"].pop(position_index)
+                    logger.info(f"删除持仓: {code} {market}")
+                else:
+                    # 否则减少持仓数量
+                    position["quantity"] -= quantity
+                    logger.info(f"减少持仓: {code} {market} 数量减至 {position['quantity']}")
+            
+            elif trans["type"] in ["sell", "卖出"]:
+                # 卖出操作被删除，需要增加持仓数量
+                position["quantity"] += quantity
+                logger.info(f"恢复持仓: {code} {market} 数量增至 {position['quantity']}")
+        
         logger.info(f"删除交易记录: {deleted_transaction['type']} {deleted_transaction['code']} {deleted_transaction['quantity']}股")
         
         return jsonify({
